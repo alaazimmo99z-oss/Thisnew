@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="ar">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>فحص بطاقات الفيزا</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f0f0f0;
+            margin: 0;
+            padding: 20px;
+            direction: rtl;
+            text-align: center;
+        }
+        h1 {
+            color: #0088cc;
+        }
+        .input-container {
+            margin: 20px 0;
+        }
+        textarea {
+            padding: 10px;
+            margin: 5px;
+            width: 90%;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            font-size: 16px;
+            height: 100px;
+            resize: none;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 10px;
+            font-size: 16px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        #startBtn {
+            background-color: #28a745;
+            color: white;
+        }
+        #stopBtn {
+            background-color: #dc3545;
+            color: white;
+        }
+        #startBtn:hover {
+            background-color: #218838;
+        }
+        #stopBtn:hover {
+            background-color: #c82333;
+        }
+        #status {
+            margin-top: 20px;
+            font-weight: bold;
+        }
+        .card-result {
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        .approved { background-color: #d4edda; color: #155724; }
+        .declined { background-color: #f8d7da; color: #721c24; }
+        .secure { background-color: #fff3cd; color: #856404; }
+    </style>
+</head>
+<body>
+    <h1>فحص بطاقات الفيزا</h1>
+    <div class="input-container">
+        <textarea id="cardsInput" placeholder="أدخل البطاقات (رقم|شهر|سنة|CVV) كل بطاقة في سطر"></textarea>
+    </div>
+    <button id="startBtn" onclick="startChecking()">بدء الفحص</button>
+    <button id="stopBtn" onclick="stopChecking()" disabled>إيقاف الفحص</button>
+    <div id="status">الحالة: في انتظار البدء...</div>
+    <div id="results"></div>
+
+    <script>
+        let isChecking = false;
+        let cards = [];
+        let currentCardIndex = 0;
+
+        // تحميل Telegram Web Apps
+        if (window.Telegram && window.Telegram.WebApp) {
+            Telegram.WebApp.ready();
+            Telegram.WebApp.expand();
+            const user = Telegram.WebApp.initDataUnsafe.user;
+            if (user) {
+                document.getElementById('status').innerText += `\nمرحبًا ${user.first_name}!`;
+            }
+        }
+
+        async function startChecking() {
+            if (isChecking) return;
+            isChecking = true;
+            document.getElementById('startBtn').disabled = true;
+            document.getElementById('stopBtn').disabled = false;
+            document.getElementById('status').innerText = 'الحالة: جارٍ الفحص...';
+
+            const cardsInput = document.getElementById('cardsInput').value.trim();
+            cards = cardsInput.split('\n').filter(line => line.trim() !== '');
+            currentCardIndex = 0;
+            document.getElementById('results').innerHTML = '';
+
+            await checkCards();
+        }
+
+        function stopChecking() {
+            isChecking = false;
+            document.getElementById('startBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = true;
+            document.getElementById('status').innerText = 'الحالة: تم الإيقاف.';
+        }
+
+        async function checkCards() {
+            while (isChecking && currentCardIndex < cards.length) {
+                const card = cards[currentCardIndex];
+                try {
+                    const [cc, m, y, cv] = card.split('|');
+                    document.getElementById('status').innerText = `الحالة: جارٍ فحص البطاقة ${cc}...`;
+
+                    // إرسال البطاقة إلى الخادم
+                    const response = await fetch('http://localhost:5000/check_card', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ cc, m, y, cv })
+                    });
+                    const result = await response.json();
+
+                    // عرض النتيجة
+                    const resultDiv = document.createElement('div');
+                    resultDiv.className = `card-result ${result.status.toLowerCase()}`;
+                    resultDiv.innerText = `البطاقة: ${cc}|${m}|${y}|${cv} - الحالة: ${result.status} - الرد: ${result.message}`;
+                    document.getElementById('results').prepend(resultDiv);
+
+                    // إرسال البطاقة الناجحة إلى البوت
+                    if (result.status === 'Approved' && window.Telegram && window.Telegram.WebApp) {
+                        Telegram.WebApp.sendData(JSON.stringify({
+                            card: `${cc}|${m}|${y}|${cv}`,
+                            status: result.status,
+                            message: result.message
+                        }));
+                    }
+
+                    currentCardIndex++;
+                    await new Promise(resolve => setTimeout(resolve, 10000)); // تأخير 10 ثوانٍ
+                } catch (error) {
+                    const resultDiv = document.createElement('div');
+                    resultDiv.className = 'card-result declined';
+                    resultDiv.innerText = `البطاقة: ${card} - خطأ: ${error.message}`;
+                    document.getElementById('results').prepend(resultDiv);
+                    currentCardIndex++;
+                    await new Promise(resolve => setTimeout(resolve, 10000));
+                }
+            }
+
+            if (currentCardIndex >= cards.length) {
+                stopChecking();
+                document.getElementById('status').innerText = 'الحالة: اكتمل فحص جميع البطاقات.';
+            }
+        }
+    </script>
+</body>
+</html>
